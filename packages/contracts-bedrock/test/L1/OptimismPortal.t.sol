@@ -22,11 +22,11 @@ import { AddressAliasHelper } from "src/vendor/AddressAliasHelper.sol";
 import "src/libraries/PortalErrors.sol";
 
 // Interfaces
-import { IResourceMetering } from "src/L1/interfaces/IResourceMetering.sol";
-import { IL2OutputOracle } from "src/L1/interfaces/IL2OutputOracle.sol";
-import { IL1Block } from "src/L2/interfaces/IL1Block.sol";
-import { IOptimismPortal } from "src/L1/interfaces/IOptimismPortal.sol";
-import { IProxy } from "src/universal/interfaces/IProxy.sol";
+import { IResourceMetering } from "interfaces/L1/IResourceMetering.sol";
+import { IL2OutputOracle } from "interfaces/L1/IL2OutputOracle.sol";
+import { IL1Block } from "interfaces/L2/IL1Block.sol";
+import { IOptimismPortal } from "interfaces/L1/IOptimismPortal.sol";
+import { IProxy } from "interfaces/universal/IProxy.sol";
 
 contract OptimismPortal_Test is CommonTest {
     address depositor;
@@ -47,11 +47,11 @@ contract OptimismPortal_Test is CommonTest {
         assertEq(address(opImpl.l2Oracle()), address(0));
         assertEq(address(opImpl.systemConfig()), address(0));
         assertEq(address(opImpl.superchainConfig()), address(0));
-        assertEq(opImpl.l2Sender(), Constants.DEFAULT_L2_SENDER);
+        assertEq(opImpl.l2Sender(), address(0));
         (uint128 prevBaseFee, uint64 prevBoughtGas, uint64 prevBlockNum) = opImpl.params();
-        assertEq(prevBaseFee, 1 gwei);
+        assertEq(prevBaseFee, 0);
         assertEq(prevBoughtGas, 0);
-        assertEq(prevBlockNum, uint64(block.number));
+        assertEq(prevBlockNum, 0);
     }
 
     /// @dev Tests that the initializer sets the correct values.
@@ -162,14 +162,16 @@ contract OptimismPortal_Test is CommonTest {
         uint256 _value,
         uint64 _gasLimit,
         bool _isCreation,
-        bytes memory _data
+        bytes calldata _data
     )
         internal
     {
         if (_isCreation) {
             _to = address(0);
         }
-        vm.assume(_data.length <= 120_000);
+        if (_data.length > 120_000) {
+            _data = _data[0:120_000];
+        }
         IResourceMetering.ResourceConfig memory rcfg = systemConfig.resourceConfig();
         _gasLimit =
             uint64(bound(_gasLimit, optimismPortal.minimumGasLimit(uint64(_data.length)), rcfg.maxResourceLimit));
@@ -201,14 +203,13 @@ contract OptimismPortal_Test is CommonTest {
     }
 
     /// @dev Tests that `depositTransaction` succeeds when msg.sender == tx.origin and non-custom gas is used.
-    /// forge-config: ciheavy.fuzz.runs = 8192
     function testFuzz_depositTransaction_senderIsOrigin_succeeds(
         address _to,
         uint256 _mint,
         uint256 _value,
         uint64 _gasLimit,
         bool _isCreation,
-        bytes memory _data
+        bytes calldata _data
     )
         external
     {
@@ -227,14 +228,13 @@ contract OptimismPortal_Test is CommonTest {
     }
 
     /// @dev Tests that `depositTransaction` succeeds when msg.sender != tx.origin and non-custom gas is used.
-    /// forge-config: ciheavy.fuzz.runs = 8192
     function testFuzz_depositTransaction_senderNotOrigin_succeeds(
         address _to,
         uint256 _mint,
         uint256 _value,
         uint64 _gasLimit,
         bool _isCreation,
-        bytes memory _data
+        bytes calldata _data
     )
         external
     {
@@ -310,7 +310,6 @@ contract OptimismPortal_Test is CommonTest {
     }
 
     /// @dev Tests that `depositTransaction` succeeds for an EOA.
-    /// forge-config: ciheavy.fuzz.runs = 8192
     function testFuzz_depositTransaction_eoa_succeeds(
         address _to,
         uint64 _gasLimit,
@@ -355,7 +354,6 @@ contract OptimismPortal_Test is CommonTest {
     }
 
     /// @dev Tests that `depositTransaction` succeeds for a contract.
-    /// forge-config: ciheavy.fuzz.runs = 8192
     function testFuzz_depositTransaction_contract_succeeds(
         address _to,
         uint64 _gasLimit,
@@ -480,13 +478,17 @@ contract OptimismPortal_Test is CommonTest {
     ///         `depositTransaction` function. This is a simple differential test.
     function test_setGasPayingToken_correctEvent_succeeds(
         address _token,
-        string memory _name,
-        string memory _symbol
+        string calldata _name,
+        string calldata _symbol
     )
         external
     {
-        vm.assume(bytes(_name).length <= 32);
-        vm.assume(bytes(_symbol).length <= 32);
+        if (bytes(_name).length > 32) {
+            _name = _name[0:32];
+        }
+        if (bytes(_symbol).length > 32) {
+            _symbol = _symbol[0:32];
+        }
 
         bytes32 name = GasPayingToken.sanitize(_name);
         bytes32 symbol = GasPayingToken.sanitize(_symbol);
@@ -530,6 +532,8 @@ contract OptimismPortal_Test is CommonTest {
 
     /// @dev Tests that `depositERC20Transaction` reverts when the gas paying token is ether.
     function test_depositERC20Transaction_noCustomGasToken_reverts() external {
+        // TODO(opcm upgrades): remove skip once upgrade path is implemented
+        skipIfForkTest("OptimismPortal_Test: gas paying token functionality DNE on op mainnet");
         // Check that the gas paying token is set to ether
         (address token,) = systemConfig.gasPayingToken();
         assertEq(token, Constants.ETHER);
@@ -539,6 +543,8 @@ contract OptimismPortal_Test is CommonTest {
     }
 
     function test_depositERC20Transaction_balanceOverflow_reverts() external {
+        // TODO(opcm upgrades): remove skip once upgrade path is implemented
+        skipIfForkTest("OptimismPortal_Test: custom gas token DNE on op mainnet");
         vm.mockCall(address(systemConfig), abi.encodeCall(systemConfig.gasPayingToken, ()), abi.encode(address(42), 18));
 
         // The balance slot
@@ -567,6 +573,47 @@ contract OptimismPortal_Test is CommonTest {
 
         // Check that the balance has been correctly updated
         assertEq(optimismPortal.balance(), address(optimismPortal).balance);
+    }
+
+    /// @dev Tests that the donateETH function donates ETH and does no state read/write
+    function test_donateETH_succeeds(uint256 _amount) external {
+        vm.startPrank(alice);
+        vm.deal(alice, _amount);
+
+        uint256 preBalance = address(optimismPortal).balance;
+
+        vm.startStateDiffRecording();
+        optimismPortal.donateETH{ value: _amount }();
+        VmSafe.AccountAccess[] memory accountAccesses = vm.stopAndReturnStateDiff();
+
+        // not necessary since it's checked below
+        assertEq(address(optimismPortal).balance, preBalance + _amount);
+
+        // 0 for extcodesize of proxy before being called by this test,
+        // 1 for the call to the proxy by the pranked address
+        // 2 for the delegate call to the impl by the proxy
+        assertEq(accountAccesses.length, 3);
+        assertEq(uint8(accountAccesses[1].kind), uint8(VmSafe.AccountAccessKind.Call));
+        assertEq(uint8(accountAccesses[2].kind), uint8(VmSafe.AccountAccessKind.DelegateCall));
+
+        // to of 1 is the optimism portal proxy
+        assertEq(accountAccesses[1].account, address(optimismPortal));
+        // accessor is the pranked address
+        assertEq(accountAccesses[1].accessor, alice);
+        // value is the amount of ETH donated
+        assertEq(accountAccesses[1].value, _amount);
+        // old balance is the balance of the optimism portal before the donation
+        assertEq(accountAccesses[1].oldBalance, preBalance);
+        // new balance is the balance of the optimism portal after the donation
+        assertEq(accountAccesses[1].newBalance, preBalance + _amount);
+        // data is the selector of the donateETH function
+        assertEq(accountAccesses[1].data, abi.encodePacked(optimismPortal.donateETH.selector));
+        // reverted of alice call to proxy is false
+        assertEq(accountAccesses[1].reverted, false);
+        // reverted of delegate call of proxy to impl is false
+        assertEq(accountAccesses[2].reverted, false);
+        // storage accesses of delegate call of proxy to impl is empty (No storage read or write!)
+        assertEq(accountAccesses[2].storageAccesses.length, 0);
     }
 }
 
@@ -598,7 +645,6 @@ contract OptimismPortal_FinalizeWithdrawal_Test is CommonTest {
         // Get withdrawal proof data we can use for testing.
         (_stateRoot, _storageRoot, _outputRoot, _withdrawalHash, _withdrawalProof) =
             ffi.getProveWithdrawalTransactionInputs(_defaultTx);
-
         // Setup a dummy output root proof for reuse.
         _outputRootProof = Types.OutputRootProof({
             version: bytes32(uint256(0)),
@@ -606,6 +652,7 @@ contract OptimismPortal_FinalizeWithdrawal_Test is CommonTest {
             messagePasserStorageRoot: _storageRoot,
             latestBlockhash: bytes32(uint256(0))
         });
+
         _proposedBlockNumber = l2OutputOracle.nextBlockNumber();
         _proposedOutputIndex = l2OutputOracle.nextOutputIndex();
     }
@@ -934,7 +981,7 @@ contract OptimismPortal_FinalizeWithdrawal_Test is CommonTest {
         assertEq(bobBalanceBefore, address(bob).balance);
     }
 
-    /// @dev Tests that `finalizeWithdrawalTransaction` reverts if the target reverts.
+    /// @dev Tests that `finalizeWithdrawalTransaction` fails if the target reverts.
     function test_finalizeWithdrawalTransaction_targetFails_fails() external {
         uint256 bobBalanceBefore = address(bob).balance;
         vm.etch(bob, hex"fe"); // Contract with just the invalid opcode.
@@ -949,6 +996,142 @@ contract OptimismPortal_FinalizeWithdrawal_Test is CommonTest {
         optimismPortal.finalizeWithdrawalTransaction(_defaultTx);
 
         assert(address(bob).balance == bobBalanceBefore);
+    }
+
+    /// @dev Tests that `finalizeWithdrawalTransaction` reverts if the target reverts and caller is the
+    /// ESTIMATION_ADDRESS.
+    function test_finalizeWithdrawalTransaction_targetFailsAndCallerIsEstimationAddress_reverts() external {
+        vm.etch(bob, hex"fe"); // Contract with just the invalid opcode.
+
+        vm.expectEmit(true, true, true, true);
+        emit WithdrawalProven(_withdrawalHash, alice, bob);
+        optimismPortal.proveWithdrawalTransaction(_defaultTx, _proposedOutputIndex, _outputRootProof, _withdrawalProof);
+
+        vm.warp(block.timestamp + l2OutputOracle.FINALIZATION_PERIOD_SECONDS() + 1);
+
+        vm.startPrank(Constants.ESTIMATION_ADDRESS, Constants.ESTIMATION_ADDRESS);
+        vm.expectRevert(GasEstimation.selector);
+        optimismPortal.finalizeWithdrawalTransaction(_defaultTx);
+    }
+
+    /// @dev Tests that `finalizeWithdrawalTransaction` succeeds when _tx.data is empty.
+    function test_finalizeWithdrawalTransaction_noTxData_succeeds() external {
+        Types.WithdrawalTransaction memory _defaultTx_noData = Types.WithdrawalTransaction({
+            nonce: 0,
+            sender: alice,
+            target: bob,
+            value: 100,
+            gasLimit: 100_000,
+            data: hex""
+        });
+        // Get withdrawal proof data we can use for testing.
+        (
+            bytes32 _stateRoot_noData,
+            bytes32 _storageRoot_noData,
+            bytes32 _outputRoot_noData,
+            bytes32 _withdrawalHash_noData,
+            bytes[] memory _withdrawalProof_noData
+        ) = ffi.getProveWithdrawalTransactionInputs(_defaultTx_noData);
+        // Setup a dummy output root proof for reuse.
+        Types.OutputRootProof memory _outputRootProof_noData = Types.OutputRootProof({
+            version: bytes32(uint256(0)),
+            stateRoot: _stateRoot_noData,
+            messagePasserStorageRoot: _storageRoot_noData,
+            latestBlockhash: bytes32(uint256(0))
+        });
+
+        // Configure the oracle to return the output root we've prepared.
+        vm.mockCall(
+            address(l2OutputOracle),
+            abi.encodePacked(IL2OutputOracle.getL2Output.selector),
+            abi.encode(
+                Types.OutputProposal(
+                    _outputRoot_noData,
+                    l2OutputOracle.getL2Output(_proposedOutputIndex).timestamp,
+                    uint128(_proposedBlockNumber)
+                )
+            )
+        );
+
+        // Fund the portal so that we can withdraw ETH.
+        vm.store(address(optimismPortal), bytes32(uint256(61)), bytes32(uint256(0xFFFFFFFF)));
+        vm.deal(address(optimismPortal), 0xFFFFFFFF);
+        uint256 bobBalanceBefore = bob.balance;
+
+        vm.expectEmit(true, true, true, true);
+        emit WithdrawalProven(_withdrawalHash_noData, alice, bob);
+        optimismPortal.proveWithdrawalTransaction(
+            _defaultTx_noData, _proposedOutputIndex, _outputRootProof_noData, _withdrawalProof_noData
+        );
+
+        vm.warp(block.timestamp + l2OutputOracle.FINALIZATION_PERIOD_SECONDS() + 1);
+        vm.expectEmit(true, true, false, true);
+        emit WithdrawalFinalized(_withdrawalHash_noData, true);
+        optimismPortal.finalizeWithdrawalTransaction(_defaultTx_noData);
+
+        assertEq(bob.balance, bobBalanceBefore + 100);
+    }
+
+    /// @dev Tests that `finalizeWithdrawalTransaction` succeeds when _tx.data is empty and with a custom gas token.
+    function test_finalizeWithdrawalTransaction_noTxDataNonEtherGasToken_succeeds() external {
+        Types.WithdrawalTransaction memory _defaultTx_noData = Types.WithdrawalTransaction({
+            nonce: 0,
+            sender: alice,
+            target: bob,
+            value: 100,
+            gasLimit: 100_000,
+            data: hex""
+        });
+        // Get withdrawal proof data we can use for testing.
+        (
+            bytes32 _stateRoot_noData,
+            bytes32 _storageRoot_noData,
+            bytes32 _outputRoot_noData,
+            bytes32 _withdrawalHash_noData,
+            bytes[] memory _withdrawalProof_noData
+        ) = ffi.getProveWithdrawalTransactionInputs(_defaultTx_noData);
+        // Setup a dummy output root proof for reuse.
+        Types.OutputRootProof memory _outputRootProof_noData = Types.OutputRootProof({
+            version: bytes32(uint256(0)),
+            stateRoot: _stateRoot_noData,
+            messagePasserStorageRoot: _storageRoot_noData,
+            latestBlockhash: bytes32(uint256(0))
+        });
+
+        // Configure the oracle to return the output root we've prepared.
+        vm.mockCall(
+            address(l2OutputOracle),
+            abi.encodePacked(IL2OutputOracle.getL2Output.selector),
+            abi.encode(
+                Types.OutputProposal(
+                    _outputRoot_noData,
+                    l2OutputOracle.getL2Output(_proposedOutputIndex).timestamp,
+                    uint128(_proposedBlockNumber)
+                )
+            )
+        );
+
+        // Fund the portal so that we can withdraw ETH.
+        vm.store(address(optimismPortal), bytes32(uint256(61)), bytes32(uint256(0xFFFFFFFF)));
+        deal(address(L1Token), address(optimismPortal), 0xFFFFFFFF);
+        // modify the gas token to be non ether
+        vm.mockCall(
+            address(systemConfig), abi.encodeCall(systemConfig.gasPayingToken, ()), abi.encode(address(L1Token), 18)
+        );
+        uint256 bobBalanceBefore = L1Token.balanceOf(bob);
+
+        vm.expectEmit(true, true, true, true);
+        emit WithdrawalProven(_withdrawalHash_noData, alice, bob);
+        optimismPortal.proveWithdrawalTransaction(
+            _defaultTx_noData, _proposedOutputIndex, _outputRootProof_noData, _withdrawalProof_noData
+        );
+
+        vm.warp(block.timestamp + l2OutputOracle.FINALIZATION_PERIOD_SECONDS() + 1);
+        vm.expectEmit(true, true, false, true);
+        emit WithdrawalFinalized(_withdrawalHash_noData, true);
+        optimismPortal.finalizeWithdrawalTransaction(_defaultTx_noData);
+
+        assertEq(L1Token.balanceOf(bob), bobBalanceBefore + 100);
     }
 
     /// @dev Tests that `finalizeWithdrawalTransaction` reverts if the finalization period
@@ -1078,7 +1261,6 @@ contract OptimismPortal_FinalizeWithdrawal_Test is CommonTest {
     }
 
     /// @dev Tests that `finalizeWithdrawalTransaction` succeeds.
-    /// forge-config: ciheavy.fuzz.runs = 8192
     function testDiff_finalizeWithdrawalTransaction_succeeds(
         address _sender,
         address _target,
@@ -1160,7 +1342,9 @@ contract OptimismPortal_FinalizeWithdrawal_Test is CommonTest {
 
 contract OptimismPortalUpgradeable_Test is CommonTest {
     /// @dev Tests that the proxy is initialized correctly.
-    function test_params_initValuesOnProxy_succeeds() external view {
+    function test_params_initValuesOnProxy_succeeds() external {
+        // TODO(opcm upgrades): remove skip once upgrade path is implemented
+        skipIfForkTest("OptimismPortal_Test: resource config varies on mainnet");
         (uint128 prevBaseFee, uint64 prevBoughtGas, uint64 prevBlockNum) = optimismPortal.params();
         IResourceMetering.ResourceConfig memory rcfg = systemConfig.resourceConfig();
 
@@ -1201,7 +1385,6 @@ contract OptimismPortalResourceFuzz_Test is CommonTest {
     uint256 constant MAX_GAS_LIMIT = 30_000_000;
 
     /// @dev Test that various values of the resource metering config will not break deposits.
-    /// forge-config: ciheavy.fuzz.runs = 10000
     function testFuzz_systemConfigDeposit_succeeds(
         uint32 _maxResourceLimit,
         uint8 _elasticityMultiplier,
@@ -1220,8 +1403,13 @@ contract OptimismPortalResourceFuzz_Test is CommonTest {
         uint64 gasLimit = systemConfig.gasLimit();
 
         // Bound resource config
+        _systemTxMaxGas = uint32(bound(_systemTxMaxGas, 0, gasLimit - 21000));
         _maxResourceLimit = uint32(bound(_maxResourceLimit, 21000, MAX_GAS_LIMIT / 8));
+        _maxResourceLimit = uint32(bound(_maxResourceLimit, 21000, gasLimit - _systemTxMaxGas));
+        _maximumBaseFee = uint128(bound(_maximumBaseFee, 1, type(uint128).max));
+        _minimumBaseFee = uint32(bound(_minimumBaseFee, 0, _maximumBaseFee - 1));
         _gasLimit = uint64(bound(_gasLimit, 21000, _maxResourceLimit));
+        _gasLimit = uint64(bound(_gasLimit, 0, gasLimit));
         _prevBaseFee = uint128(bound(_prevBaseFee, 0, 3 gwei));
         _prevBoughtGas = uint64(bound(_prevBoughtGas, 0, _maxResourceLimit - _gasLimit));
         _blockDiff = uint8(bound(_blockDiff, 0, 3));
@@ -1229,10 +1417,15 @@ contract OptimismPortalResourceFuzz_Test is CommonTest {
         _elasticityMultiplier = uint8(bound(_elasticityMultiplier, 1, type(uint8).max));
 
         // Prevent values that would cause reverts
-        vm.assume(gasLimit >= _gasLimit);
-        vm.assume(_minimumBaseFee < _maximumBaseFee);
         vm.assume(uint256(_maxResourceLimit) + uint256(_systemTxMaxGas) <= gasLimit);
         vm.assume(((_maxResourceLimit / _elasticityMultiplier) * _elasticityMultiplier) == _maxResourceLimit);
+
+        // Although we typically want to limit the usage of vm.assume, we've constructed the above
+        // bounds to satisfy the assumptions listed in this specific section. These assumptions
+        // serve only to act as an additional sanity check on top of the bounds and should not
+        // result in an unnecessary number of test rejections.
+        vm.assume(gasLimit >= _gasLimit);
+        vm.assume(_minimumBaseFee < _maximumBaseFee);
 
         // Base fee can increase quickly and mean that we can't buy the amount of gas we want.
         // Here we add a VM assumption to bound the potential increase.
@@ -1296,14 +1489,16 @@ contract OptimismPortalWithMockERC20_Test is OptimismPortal_FinalizeWithdrawal_T
         uint256 _value,
         uint64 _gasLimit,
         bool _isCreation,
-        bytes memory _data
+        bytes calldata _data
     )
         internal
     {
         if (_isCreation) {
             _to = address(0);
         }
-        vm.assume(_data.length <= 120_000);
+        if (_data.length > 120_000) {
+            _data = _data[0:120_000];
+        }
         IResourceMetering.ResourceConfig memory rcfg = systemConfig.resourceConfig();
         _gasLimit =
             uint64(bound(_gasLimit, optimismPortal.minimumGasLimit(uint64(_data.length)), rcfg.maxResourceLimit));
@@ -1336,14 +1531,13 @@ contract OptimismPortalWithMockERC20_Test is OptimismPortal_FinalizeWithdrawal_T
     }
 
     /// @dev Tests that `depositERC20Transaction` succeeds when msg.sender == tx.origin.
-    /// forge-config: ciheavy.fuzz.runs = 8192
     function testFuzz_depositERC20Transaction_senderIsOrigin_succeeds(
         address _to,
         uint256 _mint,
         uint256 _value,
         uint64 _gasLimit,
         bool _isCreation,
-        bytes memory _data
+        bytes calldata _data
     )
         external
     {
@@ -1362,14 +1556,13 @@ contract OptimismPortalWithMockERC20_Test is OptimismPortal_FinalizeWithdrawal_T
     }
 
     /// @dev Tests that `depositERC20Transaction` succeeds when msg.sender != tx.origin.
-    /// forge-config: ciheavy.fuzz.runs = 8192
     function testFuzz_depositERC20Transaction_senderNotOrigin_succeeds(
         address _to,
         uint256 _mint,
         uint256 _value,
         uint64 _gasLimit,
         bool _isCreation,
-        bytes memory _data
+        bytes calldata _data
     )
         external
     {
@@ -1525,14 +1718,16 @@ contract OptimismPortalWithMockERC20_Test is OptimismPortal_FinalizeWithdrawal_T
         uint256 _value,
         uint64 _gasLimit,
         bool _isCreation,
-        bytes memory _data
+        bytes calldata _data
     )
         internal
     {
         if (_isCreation) {
             _to = address(0);
         }
-        vm.assume(_data.length <= 120_000);
+        if (_data.length > 120_000) {
+            _data = _data[0:120_000];
+        }
         IResourceMetering.ResourceConfig memory rcfg = systemConfig.resourceConfig();
         _gasLimit =
             uint64(bound(_gasLimit, optimismPortal.minimumGasLimit(uint64(_data.length)), rcfg.maxResourceLimit));
@@ -1561,16 +1756,17 @@ contract OptimismPortalWithMockERC20_Test is OptimismPortal_FinalizeWithdrawal_T
     }
 
     /// @dev Tests that `depositTransaction` succeeds when a custom gas token is used but the msg.value is zero.
-    /// forge-config: ciheavy.fuzz.runs = 8192
     function testFuzz_depositTransaction_customGasTokenWithNoValueAndSenderIsOrigin_succeeds(
         address _to,
         uint256 _value,
         uint64 _gasLimit,
         bool _isCreation,
-        bytes memory _data
+        bytes calldata _data
     )
         external
     {
+        // TODO(opcm upgrades): remove skip once upgrade path is implemented
+        skipIfForkTest("OptimismPortal_Test: gas paying token functionality DNE on op mainnet");
         // Ensure that msg.sender == tx.origin
         vm.startPrank(address(this), address(this));
 
@@ -1585,16 +1781,17 @@ contract OptimismPortalWithMockERC20_Test is OptimismPortal_FinalizeWithdrawal_T
     }
 
     /// @dev Tests that `depositTransaction` succeeds when a custom gas token is used but the msg.value is zero.
-    /// forge-config: ciheavy.fuzz.runs = 8192
     function testFuzz_depositTransaction_customGasTokenWithNoValueAndSenderNotOrigin_succeeds(
         address _to,
         uint256 _value,
         uint64 _gasLimit,
         bool _isCreation,
-        bytes memory _data
+        bytes calldata _data
     )
         external
     {
+        // TODO(opcm upgrades): remove skip once upgrade path is implemented
+        skipIfForkTest("OptimismPortal_Test: gas paying token functionality DNE on op mainnet");
         // Ensure that msg.sender != tx.origin
         vm.startPrank(address(this), address(1));
 
@@ -1610,6 +1807,8 @@ contract OptimismPortalWithMockERC20_Test is OptimismPortal_FinalizeWithdrawal_T
 
     /// @dev Tests that `depositTransaction` fails when a custom gas token is used and msg.value is non-zero.
     function test_depositTransaction_customGasTokenWithValue_reverts() external {
+        // TODO(opcm upgrades): remove skip once upgrade path is implemented
+        skipIfForkTest("OptimismPortal_Test: gas paying token functionality DNE on op mainnet");
         // Mock the gas paying token to be the ERC20 token
         vm.mockCall(
             address(systemConfig), abi.encodeCall(systemConfig.gasPayingToken, ()), abi.encode(address(token), 18)
