@@ -16,3 +16,12 @@ merging in new changes example:
 `git subtree merge -P git-subtree-test-dependency --squash git-subtree-test-dependency/main`
 (via tag)
 `git subtree merge -P git-subtree-test-dependency --squash tags/<tag-name>`
+
+## merging
+
+Keep my local changes and accept all other changes:
+`git subtree merge -P git-subtree-test-dependency --squash tags/v2.0.0 --strategy-option=ours`
+(can instead use `--strategy-option=theirs` to keep all their changes)
+
+Resolve conflicts manually:
+`git subtree merge -P git-subtree-test-dependency --squash tags/v2.0.0`
