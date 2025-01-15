@@ -14,3 +14,5 @@ fetching changes from that remote:
 
 merging in new changes example:
 `git subtree merge -P git-subtree-test-dependency --squash git-subtree-test-dependency/main`
+(via tag)
+`git subtree merge -P git-subtree-test-dependency --squash tags/<tag-name>`
