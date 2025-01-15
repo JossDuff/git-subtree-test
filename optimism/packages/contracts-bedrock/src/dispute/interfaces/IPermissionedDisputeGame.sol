@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import { Types } from "src/libraries/Types.sol";
-import "src/dispute/lib/Types.sol";
+import { GameType, Claim, Position, Clock, Hash, Duration } from "src/dispute/lib/Types.sol";
 
 import { IAnchorStateRegistry } from "src/dispute/interfaces/IAnchorStateRegistry.sol";
 import { IDelayedWETH } from "src/dispute/interfaces/IDelayedWETH.sol";
@@ -73,7 +73,7 @@ interface IPermissionedDisputeGame is IDisputeGame {
     function claimCredit(address _recipient) external;
     function claimData(uint256)
         external
-        view
+        view // nosemgrep
         returns (
             uint32 parentIndex,
             address counteredBy,
@@ -101,12 +101,12 @@ interface IPermissionedDisputeGame is IDisputeGame {
     function resolutionCheckpoints(uint256)
         external
         view
-        returns (bool initialCheckpointComplete, uint32 subgameIndex, Position leftmostPosition, address counteredBy);
+        returns (bool initialCheckpointComplete, uint32 subgameIndex, Position leftmostPosition, address counteredBy); // nosemgrep
     function resolveClaim(uint256 _claimIndex, uint256 _numToResolve) external;
     function resolvedSubgames(uint256) external view returns (bool);
     function splitDepth() external view returns (uint256 splitDepth_);
     function startingBlockNumber() external view returns (uint256 startingBlockNumber_);
-    function startingOutputRoot() external view returns (Hash root, uint256 l2BlockNumber);
+    function startingOutputRoot() external view returns (Hash root, uint256 l2BlockNumber); // nosemgrep
     function startingRootHash() external view returns (Hash startingRootHash_);
     function step(uint256 _claimIndex, bool _isAttack, bytes memory _stateData, bytes memory _proof) external;
     function subgames(uint256, uint256) external view returns (uint256);
