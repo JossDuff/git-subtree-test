@@ -8,7 +8,7 @@ import { Initializable } from "@openzeppelin/contracts/proxy/utils/Initializable
 import { Types } from "src/libraries/Types.sol";
 
 // Interfaces
-import { ISemver } from "src/universal/interfaces/ISemver.sol";
+import { ISemver } from "interfaces/universal/ISemver.sol";
 
 /// @custom:proxied true
 /// @title L2OutputOracle
@@ -60,21 +60,13 @@ contract L2OutputOracle is Initializable, ISemver {
     event OutputsDeleted(uint256 indexed prevNextOutputIndex, uint256 indexed newNextOutputIndex);
 
     /// @notice Semantic version.
-    /// @custom:semver 1.8.1-beta.2
-    string public constant version = "1.8.1-beta.2";
+    /// @custom:semver 1.8.1-beta.4
+    string public constant version = "1.8.1-beta.4";
 
     /// @notice Constructs the L2OutputOracle contract. Initializes variables to the same values as
     ///         in the getting-started config.
     constructor() {
-        initialize({
-            _submissionInterval: 1,
-            _l2BlockTime: 1,
-            _startingBlockNumber: 0,
-            _startingTimestamp: 0,
-            _proposer: address(0),
-            _challenger: address(0),
-            _finalizationPeriodSeconds: 0
-        });
+        _disableInitializers();
     }
 
     /// @notice Initializer.
@@ -95,7 +87,7 @@ contract L2OutputOracle is Initializable, ISemver {
         address _challenger,
         uint256 _finalizationPeriodSeconds
     )
-        public
+        external
         initializer
     {
         require(_submissionInterval > 0, "L2OutputOracle: submission interval must be greater than 0");
