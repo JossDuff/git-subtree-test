@@ -1,0 +1,4 @@
+enum SomeChange {
+    Cat,
+    Dog,
+}
